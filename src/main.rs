@@ -1,45 +1,35 @@
 use tokio::net::{TcpListener, TcpStream};
-use tokio::io::Interest;
+use tokio::io::{AsyncWriteExt, AsyncReadExt};
 
 const SERVER_ADDRESS: &str = "127.0.0.1:11037";
 const BUFFER_MAX_LEN: usize = 1024;
 
-async fn read_from_client(stream: &TcpStream, buf: &mut [u8]) -> std::io::Result<usize> {
-    let _ready = match stream.ready(Interest::READABLE).await {
-        Ok(x) => x,
-        Err(err) => return Err(err),
-    };
+async fn process_client(mut stream: TcpStream) {
+    let mut buf = [0u8; BUFFER_MAX_LEN];
 
-    // The stream should be readable if an error was not raised.
-    let len = stream.try_read(buf)?;
+    loop {
+        match stream.read(&mut buf).await {
+            Ok(len) => {
+                if len == 0 {
+                    // If buffer is too small, also 0 will be returned,
+                    // but in this case I think that we should also break the connection.
+                    println!("Connection lost...");
+                    break;
+                } else {
+                    println!("Read {} bytes! The message: {}", len, String::from_utf8_lossy(&buf[..len]));
 
-    Ok(len)
-}
-
-async fn write_to_client(stream: &TcpStream, buf: &[u8]) -> std::io::Result<usize> {
-    let _ready = match stream.ready(Interest::WRITABLE).await {
-        Ok(x) => x,
-        Err(err) => return Err(err),
-    };
-
-    // The stream should be writable if an error was not raised.
-    let len = stream.try_write(buf)?;
-
-    Ok(len)
-}
-
-async fn process_client(stream: TcpStream) {
-    let mut buf = [0; BUFFER_MAX_LEN];
-
-    match read_from_client(&stream, &mut buf).await {
-        Ok(len) => {
-            println!("Read {} bytes, the message is: {}", len, String::from_utf8_lossy(&buf[..len]));
-            match write_to_client(&stream, &buf[..len]).await {
-                Ok(len) => println!("Sent back {} bytes!", len),
-                Err(err) => eprintln!("Write failed: {}", err),
-            }
+                    if let Err(err) = stream.write_all(&mut buf).await {
+                        eprintln!("An error occurred while writing: {}", err);
+                        break;
+                    }
+                    println!("Sent {} bytes back!", len);
+                }
+            },
+            Err(err) => {
+                eprintln!("An error occured while reading: {}", err);
+                break;
+            },
         }
-        Err(err) => eprintln!("Read failed: {}", err),
     }
 }
 
